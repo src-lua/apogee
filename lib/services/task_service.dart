@@ -77,6 +77,9 @@ class TaskService {
     final templates = getTaskTemplates();
     templates.add(template);
     await saveTaskTemplates(templates);
+
+    // Generate tasks for existing days
+    await _regenerateAffectedDays(template);
   }
 
   Future<void> updateTaskTemplate(TaskTemplate updatedTemplate) async {

@@ -84,6 +84,153 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
     return _taskService.getTasksForDay(day);
   }
 
+  bool _isFutureDay(DateTime day) {
+    final today = DateTime.now();
+    final normalizedToday = DateTime(today.year, today.month, today.day);
+    final normalizedDay = DateTime(day.year, day.month, day.day);
+    return normalizedDay.isAfter(normalizedToday);
+  }
+
+  void _goToToday() {
+    final today = DateTime.now();
+    setState(() {
+      _focusedDay = today;
+      _selectedDay = today;
+    });
+  }
+
+  Widget _buildLevelWithProgress() {
+    final progress = _userService.getLevelProgress();
+    final currentXP = _userPoints;
+    final nextLevelXP = _userService.getRequiredPointsForNextLevel();
+    final currentLevelXP = _userService.getUserLevel() == 1 ? 0 : ((_userLevel - 1) * (_userLevel - 1) * 100);
+    final progressXP = currentXP - currentLevelXP;
+    final neededXP = nextLevelXP - currentLevelXP;
+    final percentage = (progress * 100).toStringAsFixed(1);
+
+    return Tooltip(
+      message: 'Nível $_userLevel\n$progressXP / $neededXP XP\n$percentage% para o próximo nível',
+      child: Container(
+        width: 40,
+        height: 40,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            SizedBox(
+              width: 40,
+              height: 40,
+              child: CircularProgressIndicator(
+                value: progress,
+                strokeWidth: 3,
+                backgroundColor: Colors.white.withOpacity(0.3),
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.yellow[400]!),
+              ),
+            ),
+            Text(
+              '$_userLevel',
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showLevelUpPopup(LevelUpResult levelUpResult) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Colors.yellow[400]!, Colors.orange[400]!],
+                ),
+              ),
+              child: const Icon(
+                Icons.emoji_events,
+                size: 40,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'PARABÉNS!',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.orange[600],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Você subiu para o nível ${levelUpResult.newLevel}!',
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text(
+                    '💎',
+                    style: TextStyle(fontSize: 24),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '+${levelUpResult.diamondsAwarded} Diamantes',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue[700],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.deepPurple,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+              ),
+              child: const Text(
+                'Continuar',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _updateTaskStatus(Task task, TaskStatus newStatus, DateTime day) async {
     try {
       await _taskService.updateTaskStatus(task, newStatus, day);
@@ -104,36 +251,55 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
 
         // Handle XP rewards/losses
         if (newStatus != TaskStatus.pending) {
-          // Calculate XP based on status and timing (only for on-time tasks)
+          // Calculate XP based on status and timing
           int xpAmount = 0;
           if (!updatedTask.isLate) {
             // Only give XP if task is not late
             if (newStatus == TaskStatus.completed) {
-              xpAmount = task.coins; // Full XP for on-time completion
+              xpAmount = 20; // 20 XP for completed tasks
             } else if (newStatus == TaskStatus.notNecessary) {
-              xpAmount = task.coins ~/ 2; // Half XP for "not necessary"
+              xpAmount = 10; // 10 XP for "not necessary" tasks
             } else if (newStatus == TaskStatus.notDid) {
-              xpAmount = task.coins ~/ 4; // Quarter XP for "not did"
+              xpAmount = 10; // 10 XP for "not did" tasks (logged)
             }
           }
           // Late completion gives 0 XP (xpAmount stays 0)
 
+          // Remove old XP if changing from another status
+          if (task.status != TaskStatus.pending) {
+            int oldXP = 0;
+            if (task.status == TaskStatus.completed && !task.isLate) {
+              oldXP = 20;
+            } else if (task.status == TaskStatus.notNecessary) {
+              oldXP = 10;
+            } else if (task.status == TaskStatus.notDid) {
+              oldXP = 10;
+            }
+
+            if (oldXP > 0) {
+              await _userService.removePoints(oldXP, day);
+            }
+          }
+
           if (xpAmount > 0) {
-            await _userService.addPoints(xpAmount);
+            final result = await _userService.addPoints(xpAmount, day);
+            if (result.levelUpResult != null) {
+              _showLevelUpPopup(result.levelUpResult!);
+            }
           }
         } else if (task.status != TaskStatus.pending && newStatus == TaskStatus.pending) {
-          // Reverting to pending - lose XP and coins
+          // Reverting to pending - lose XP
           int xpLoss = 0;
           if (task.status == TaskStatus.completed && !task.isLate) {
-            xpLoss = task.coins;
+            xpLoss = 20;
           } else if (task.status == TaskStatus.notNecessary) {
-            xpLoss = task.coins ~/ 2;
+            xpLoss = 10;
           } else if (task.status == TaskStatus.notDid) {
-            xpLoss = task.coins ~/ 4;
+            xpLoss = 10;
           }
 
           if (xpLoss > 0) {
-            await _userService.removePoints(xpLoss);
+            await _userService.removePoints(xpLoss, day);
           }
         }
 
@@ -173,10 +339,31 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
         backgroundColor: Colors.deepPurple,
         foregroundColor: Colors.white,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => _regenerateAllTasks(),
-            tooltip: 'Atualizar todas as tarefas',
+          Tooltip(
+            message: 'Ir para hoje\nRetorna rapidamente para o dia atual',
+            child: IconButton(
+              icon: const Icon(Icons.today),
+              onPressed: () => _goToToday(),
+            ),
+          ),
+          Container(
+            height: 30,
+            width: 1,
+            color: Colors.white.withOpacity(0.3),
+            margin: const EdgeInsets.symmetric(horizontal: 8),
+          ),
+          Tooltip(
+            message: 'Atualizar todas as tarefas\nRegera tarefas baseadas nos templates atuais',
+            child: IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: () => _regenerateAllTasks(),
+            ),
+          ),
+          Container(
+            height: 30,
+            width: 1,
+            color: Colors.white.withOpacity(0.3),
+            margin: const EdgeInsets.symmetric(horizontal: 8),
           ),
           Center(
             child: Padding(
@@ -184,24 +371,80 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    'Nv.$_userLevel',
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  _buildLevelWithProgress(),
+                  const SizedBox(width: 12),
+                  Container(
+                    height: 20,
+                    width: 1,
+                    color: Colors.white.withOpacity(0.3),
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '$_userPoints XP',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  const SizedBox(width: 12),
+                  Tooltip(
+                    message: () {
+                      final now = DateTime.now();
+                      final isInGap = now.hour < 2;
+                      final todayXP = _userService.getTodayXP();
+                      final tomorrowXP = _userService.getTomorrowXP();
+                      final todayRemaining = 200 - todayXP;
+                      final tomorrowRemaining = 200 - tomorrowXP;
+                      final todayOverLimit = todayXP >= 200;
+                      final tomorrowOverLimit = tomorrowXP >= 200;
+
+                      String message = 'XP Total: $_userPoints\n';
+
+                      if (isInGap) {
+                        message += '🌙 PERÍODO ESPECIAL (0h-2h)\n\n';
+                        message += 'Limite atual: $todayXP XP${todayOverLimit ? ' (acima)' : ''}\n';
+                        message += '${todayOverLimit ? 'Próximo XP: 25%' : 'Restante: $todayRemaining XP'}\n\n';
+                        message += 'Próximo limite: $tomorrowXP XP${tomorrowOverLimit ? ' (acima)' : ''}\n';
+                        message += '${tomorrowOverLimit ? 'Próximo XP: 25%' : 'Restante: $tomorrowRemaining XP'}\n\n';
+                        message += 'Tarefas de ontem → Limite atual\n';
+                        message += 'Tarefas de hoje → Próximo limite\n\n';
+                      } else {
+                        message += 'Hoje: $todayXP XP${todayOverLimit ? ' (acima do limite)' : ''}\n';
+                        message += '${todayOverLimit ? 'Próximo XP: 25% da taxa normal' : 'Restante hoje: $todayRemaining XP'}\n\n';
+                      }
+
+                      message += 'Como ganhar XP:\n';
+                      message += '• Concluída: 20 XP\n';
+                      message += '• Registrada: 10 XP\n';
+                      message += '• Atrasada: 0 XP\n\n';
+                      message += 'Prazo: até 2h da manhã seguinte';
+
+                      return message;
+                    }(),
+                    child: Text(
+                      '$_userPoints XP',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '💰$_userCoins',
-                    style: const TextStyle(fontSize: 14),
+                  const SizedBox(width: 12),
+                  Container(
+                    height: 20,
+                    width: 1,
+                    color: Colors.white.withOpacity(0.3),
                   ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '💎$_userDiamonds',
-                    style: const TextStyle(fontSize: 14),
+                  const SizedBox(width: 12),
+                  Tooltip(
+                    message: 'Moedas: $_userCoins\nGanhe completando tarefas',
+                    child: Text(
+                      '💰$_userCoins',
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(
+                    height: 20,
+                    width: 1,
+                    color: Colors.white.withOpacity(0.3),
+                  ),
+                  const SizedBox(width: 12),
+                  Tooltip(
+                    message: 'Diamantes: $_userDiamonds\nGanhe subindo de nível',
+                    child: Text(
+                      '💎$_userDiamonds',
+                      style: const TextStyle(fontSize: 14),
+                    ),
                   ),
                 ],
               ),
@@ -380,53 +623,58 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        PopupMenuButton<TaskStatus>(
-                          onSelected: (status) => _updateTaskStatus(task, status, selectedDay),
-                          icon: Icon(
-                            task.status == TaskStatus.pending ? Icons.radio_button_unchecked :
-                            task.status == TaskStatus.completed ? Icons.check_circle :
-                            task.status == TaskStatus.notNecessary ? Icons.not_interested :
-                            Icons.cancel,
-                            color: task.status == TaskStatus.completed ? Colors.green :
-                                   task.status == TaskStatus.notNecessary ? Colors.blue :
-                                   task.status == TaskStatus.notDid ? Colors.orange :
-                                   Colors.grey,
-                          ),
-                          itemBuilder: (context) => [
-                            const PopupMenuItem(
-                              value: TaskStatus.completed,
-                              child: ListTile(
-                                leading: Icon(Icons.check_circle, color: Colors.green),
-                                title: Text('Concluída'),
-                                subtitle: Text('Ganhar moedas'),
+                        _isFutureDay(selectedDay)
+                          ? Icon(
+                              Icons.lock,
+                              color: Colors.grey,
+                            )
+                          : PopupMenuButton<TaskStatus>(
+                              onSelected: (status) => _updateTaskStatus(task, status, selectedDay),
+                              icon: Icon(
+                                task.status == TaskStatus.pending ? Icons.radio_button_unchecked :
+                                task.status == TaskStatus.completed ? Icons.check_circle :
+                                task.status == TaskStatus.notNecessary ? Icons.not_interested :
+                                Icons.cancel,
+                                color: task.status == TaskStatus.completed ? Colors.green :
+                                       task.status == TaskStatus.notNecessary ? Colors.blue :
+                                       task.status == TaskStatus.notDid ? Colors.orange :
+                                       Colors.grey,
                               ),
+                              itemBuilder: (context) => [
+                                const PopupMenuItem(
+                                  value: TaskStatus.completed,
+                                  child: ListTile(
+                                    leading: Icon(Icons.check_circle, color: Colors.green),
+                                    title: Text('Concluída'),
+                                    subtitle: Text('Ganhar moedas'),
+                                  ),
+                                ),
+                                const PopupMenuItem(
+                                  value: TaskStatus.notNecessary,
+                                  child: ListTile(
+                                    leading: Icon(Icons.not_interested, color: Colors.blue),
+                                    title: Text('Não necessária'),
+                                    subtitle: Text('Sem penalidade'),
+                                  ),
+                                ),
+                                const PopupMenuItem(
+                                  value: TaskStatus.notDid,
+                                  child: ListTile(
+                                    leading: Icon(Icons.cancel, color: Colors.orange),
+                                    title: Text('Não fez'),
+                                    subtitle: Text('Ganhar XP mais tarde'),
+                                  ),
+                                ),
+                                const PopupMenuItem(
+                                  value: TaskStatus.pending,
+                                  child: ListTile(
+                                    leading: Icon(Icons.radio_button_unchecked, color: Colors.grey),
+                                    title: Text('Pendente'),
+                                    subtitle: Text('Resetar status'),
+                                  ),
+                                ),
+                              ],
                             ),
-                            const PopupMenuItem(
-                              value: TaskStatus.notNecessary,
-                              child: ListTile(
-                                leading: Icon(Icons.not_interested, color: Colors.blue),
-                                title: Text('Não necessária'),
-                                subtitle: Text('Sem penalidade'),
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: TaskStatus.notDid,
-                              child: ListTile(
-                                leading: Icon(Icons.cancel, color: Colors.orange),
-                                title: Text('Não fez'),
-                                subtitle: Text('Ganhar XP mais tarde'),
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: TaskStatus.pending,
-                              child: ListTile(
-                                leading: Icon(Icons.radio_button_unchecked, color: Colors.grey),
-                                title: Text('Pendente'),
-                                subtitle: Text('Resetar status'),
-                              ),
-                            ),
-                          ],
-                        ),
                       ],
                     ),
                   ),

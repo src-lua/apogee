@@ -3,16 +3,38 @@ import 'package:hive/hive.dart';
 import '../models/task.dart';
 import '../models/enums/task_status.dart';
 
+class LevelUpResult {
+  final int oldLevel;
+  final int newLevel;
+  final int diamondsAwarded;
+
+  LevelUpResult({
+    required this.oldLevel,
+    required this.newLevel,
+    required this.diamondsAwarded,
+  });
+}
+
+class PointsResult {
+  final int xpApplied;
+  final LevelUpResult? levelUpResult;
+
+  PointsResult({
+    required this.xpApplied,
+    this.levelUpResult,
+  });
+}
+
 class UserService {
   late final Box _dataBox;
-  static const String _userPointsKey = 'userPoints';
+  static const String _userPointsKey = 'userPoints'; // XP until yesterday
   static const String _userCoinsKey = 'userCoins';
   static const String _userDiamondsKey = 'userDiamonds';
   static const String _userLevelKey = 'userLevel';
   static const String _userStreakKey = 'userStreak';
   static const String _userMaxStreakKey = 'userMaxStreak';
-  static const String _dailyXpEarnedKey = 'dailyXpEarned'; // Total XP earned today (uncapped)
-  static const String _dailyXpLostKey = 'dailyXpLost'; // Total XP lost today
+  static const String _todayXpKey = 'todayXp'; // Sum of all XP earned today
+  static const String _tomorrowXpKey = 'tomorrowXp'; // Sum of all XP earned tomorrow (during 0-2 AM gap)
   static const String _lastXpResetKey = 'lastXpReset';
 
   UserService._();
@@ -25,11 +47,67 @@ class UserService {
 
   int getUserPoints() {
     try {
-      return _dataBox.get(_userPointsKey, defaultValue: 0);
+      _checkDailyXpReset();
+      return getTotalXP();
     } catch (e) {
       if (kDebugMode) print('Error loading user points: $e');
       return 0;
     }
+  }
+
+  int getBaseXP() {
+    try {
+      return _dataBox.get(_userPointsKey, defaultValue: 0);
+    } catch (e) {
+      if (kDebugMode) print('Error loading base XP: $e');
+      return 0;
+    }
+  }
+
+  int getTodayXP() {
+    try {
+      _checkDailyXpReset();
+      return _dataBox.get(_todayXpKey, defaultValue: 0);
+    } catch (e) {
+      if (kDebugMode) print('Error loading today XP: $e');
+      return 0;
+    }
+  }
+
+  int getTomorrowXP() {
+    try {
+      _checkDailyXpReset();
+      return _dataBox.get(_tomorrowXpKey, defaultValue: 0);
+    } catch (e) {
+      if (kDebugMode) print('Error loading tomorrow XP: $e');
+      return 0;
+    }
+  }
+
+  int getRealTodayXP() {
+    final todayXP = getTodayXP();
+    const cap = 200;
+
+    if (todayXP <= cap) {
+      return todayXP;
+    } else {
+      return cap + ((todayXP - cap) * 0.25).round();
+    }
+  }
+
+  int getRealTomorrowXP() {
+    final tomorrowXP = getTomorrowXP();
+    const cap = 200;
+
+    if (tomorrowXP <= cap) {
+      return tomorrowXP;
+    } else {
+      return cap + ((tomorrowXP - cap) * 0.25).round();
+    }
+  }
+
+  int getTotalXP() {
+    return getBaseXP() + getRealTodayXP() + getRealTomorrowXP();
   }
 
   int getUserCoins() {
@@ -77,95 +155,90 @@ class UserService {
     }
   }
 
-  int getDailyXpEarned() {
-    try {
-      _checkDailyXpReset();
-      return _dataBox.get(_dailyXpEarnedKey, defaultValue: 0);
-    } catch (e) {
-      if (kDebugMode) print('Error loading daily earned XP: $e');
-      return 0;
-    }
-  }
-
-  int getDailyXpLost() {
-    try {
-      _checkDailyXpReset();
-      return _dataBox.get(_dailyXpLostKey, defaultValue: 0);
-    } catch (e) {
-      if (kDebugMode) print('Error loading daily lost XP: $e');
-      return 0;
-    }
-  }
-
-  int getDailyXpNet() {
-    // Calculate: min(earned - lost, daily_cap)
-    final earned = getDailyXpEarned();
-    final lost = getDailyXpLost();
-    final net = earned - lost;
-    final cap = getDailyXpLimit();
-    return net.clamp(0, cap);
-  }
-
   int getDailyXpLimit() {
-    // XP limit increases with level: base 100 + (level * 20)
-    return 100 + (getUserLevel() * 20);
+    return 200;
   }
 
-  Future<int> addPoints(int points) async {
+  Future<PointsResult> addPoints(int points, DateTime taskDay) async {
     try {
       _checkDailyXpReset();
 
-      // Calculate previous net XP
-      final previousNet = getDailyXpNet();
+      final now = DateTime.now();
+      final isInGapPeriod = now.hour < 2; // Between 0 AM and 2 AM
 
-      // Track earned XP (uncapped)
-      final dailyEarned = getDailyXpEarned();
-      await _dataBox.put(_dailyXpEarnedKey, dailyEarned + points);
+      // Determine which XP pool to add to
+      if (isInGapPeriod) {
+        // During gap period: check if task is from "yesterday" or "today"
+        final currentXpDay = now.hour >= 2
+            ? DateTime(now.year, now.month, now.day)
+            : DateTime(now.year, now.month, now.day - 1);
 
-      // Calculate new net XP after this addition
-      final newNet = getDailyXpNet();
-      final xpToApply = newNet - previousNet;
+        final normalizedTaskDay = DateTime(taskDay.year, taskDay.month, taskDay.day);
 
-      if (xpToApply > 0) {
-        // Update user's total points
-        final currentPoints = getUserPoints();
-        final newPoints = currentPoints + xpToApply;
-        await _dataBox.put(_userPointsKey, newPoints);
-
-        // Check for level up
-        await _checkLevelUp(newPoints);
+        if (normalizedTaskDay.isAtSameMomentAs(currentXpDay)) {
+          // Task from "yesterday" -> current limit
+          final currentTodayXP = getTodayXP();
+          await _dataBox.put(_todayXpKey, currentTodayXP + points);
+        } else {
+          // Task from "today" -> tomorrow's limit
+          final currentTomorrowXP = getTomorrowXP();
+          await _dataBox.put(_tomorrowXpKey, currentTomorrowXP + points);
+        }
+      } else {
+        // Normal period: always add to today
+        final currentTodayXP = getTodayXP();
+        await _dataBox.put(_todayXpKey, currentTodayXP + points);
       }
 
-      return xpToApply; // Return actual XP applied to user's total
+      // Check for level up with new total
+      final newTotalXP = getTotalXP();
+      final levelUpResult = await _checkLevelUp(newTotalXP);
+
+      return PointsResult(
+        xpApplied: points,
+        levelUpResult: levelUpResult,
+      );
     } catch (e) {
       if (kDebugMode) print('Error adding points: $e');
       rethrow;
     }
   }
 
-  Future<int> removePoints(int points) async {
+  Future<int> removePoints(int points, DateTime taskDay) async {
     try {
       _checkDailyXpReset();
 
-      // Calculate previous net XP
-      final previousNet = getDailyXpNet();
+      final now = DateTime.now();
+      final isInGapPeriod = now.hour < 2; // Between 0 AM and 2 AM
 
-      // Track lost XP
-      final dailyLost = getDailyXpLost();
-      await _dataBox.put(_dailyXpLostKey, dailyLost + points);
+      // Determine which XP pool to remove from
+      if (isInGapPeriod) {
+        // During gap period: check if task is from "yesterday" or "today"
+        final currentXpDay = now.hour >= 2
+            ? DateTime(now.year, now.month, now.day)
+            : DateTime(now.year, now.month, now.day - 1);
 
-      // Calculate new net XP after this loss
-      final newNet = getDailyXpNet();
-      final xpToRemove = previousNet - newNet;
+        final normalizedTaskDay = DateTime(taskDay.year, taskDay.month, taskDay.day);
 
-      if (xpToRemove > 0) {
-        // Update user's total points
-        final currentPoints = getUserPoints();
-        final newPoints = (currentPoints - xpToRemove).clamp(0, double.infinity).toInt();
-        await _dataBox.put(_userPointsKey, newPoints);
+        if (normalizedTaskDay.isAtSameMomentAs(currentXpDay)) {
+          // Task from "yesterday" -> current limit
+          final currentTodayXP = getTodayXP();
+          final newTodayXP = (currentTodayXP - points).clamp(0, double.infinity).toInt();
+          await _dataBox.put(_todayXpKey, newTodayXP);
+        } else {
+          // Task from "today" -> tomorrow's limit
+          final currentTomorrowXP = getTomorrowXP();
+          final newTomorrowXP = (currentTomorrowXP - points).clamp(0, double.infinity).toInt();
+          await _dataBox.put(_tomorrowXpKey, newTomorrowXP);
+        }
+      } else {
+        // Normal period: always remove from today
+        final currentTodayXP = getTodayXP();
+        final newTodayXP = (currentTodayXP - points).clamp(0, double.infinity).toInt();
+        await _dataBox.put(_todayXpKey, newTodayXP);
       }
 
-      return xpToRemove; // Return actual XP removed from user's total
+      return points; // Return the points attempted to remove
     } catch (e) {
       if (kDebugMode) print('Error removing points: $e');
       rethrow;
@@ -227,7 +300,7 @@ class UserService {
     return false;
   }
 
-  Future<void> _checkLevelUp(int currentPoints) async {
+  Future<LevelUpResult?> _checkLevelUp(int currentPoints) async {
     final currentLevel = getUserLevel();
     final requiredPointsForNextLevel = _getRequiredPointsForLevel(currentLevel + 1);
 
@@ -240,12 +313,19 @@ class UserService {
       await addDiamonds(diamondsReward);
 
       if (kDebugMode) print('Level up! New level: $newLevel, Diamonds awarded: $diamondsReward');
+
+      return LevelUpResult(
+        oldLevel: currentLevel,
+        newLevel: newLevel,
+        diamondsAwarded: diamondsReward,
+      );
     }
+    return null;
   }
 
   int _getRequiredPointsForLevel(int level) {
-    // Progressive XP requirement: level^2 * 100
-    return level * level * 100;
+    // Progressive XP requirement: (level-1)^2 * 100
+    return (level - 1) * (level - 1) * 100;
   }
 
   int getRequiredPointsForNextLevel() {
@@ -302,14 +382,34 @@ class UserService {
   void _checkDailyXpReset() {
     try {
       final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final lastResetDate = _dataBox.get(_lastXpResetKey);
 
-      if (lastResetDate == null || DateTime.parse(lastResetDate).isBefore(today)) {
-        // Reset daily counters
-        _dataBox.put(_dailyXpEarnedKey, 0);
-        _dataBox.put(_dailyXpLostKey, 0);
-        _dataBox.put(_lastXpResetKey, today.toIso8601String());
+      // Calculate the current "day" based on 2 AM cutoff
+      // If it's before 2 AM, we're still in the previous day
+      final currentDay = now.hour >= 2
+          ? DateTime(now.year, now.month, now.day)
+          : DateTime(now.year, now.month, now.day - 1);
+
+      final lastResetDate = _dataBox.get(_lastXpResetKey);
+      final lastResetDay = lastResetDate != null
+          ? DateTime.parse(lastResetDate)
+          : null;
+
+      if (lastResetDay == null || lastResetDay.isBefore(currentDay)) {
+        // Shift XP values: base += real_today, today = tomorrow, tomorrow = 0
+        final realTodayXP = getRealTodayXP();
+        final currentBaseXP = getBaseXP();
+        final currentTomorrowXP = getTomorrowXP();
+
+        // base XP += real today XP
+        _dataBox.put(_userPointsKey, currentBaseXP + realTodayXP);
+
+        // today XP = tomorrow XP
+        _dataBox.put(_todayXpKey, currentTomorrowXP);
+
+        // tomorrow XP = 0
+        _dataBox.put(_tomorrowXpKey, 0);
+
+        _dataBox.put(_lastXpResetKey, currentDay.toIso8601String());
       }
     } catch (e) {
       if (kDebugMode) print('Error checking daily XP reset: $e');
