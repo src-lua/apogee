@@ -1,18 +1,32 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'models/task.dart';
+import 'models/task_template.dart';
+import 'models/enums/recurrency_type.dart';
+import 'models/enums/task_status.dart';
+import 'services/task_service.dart';
+import 'services/user_service.dart';
+import 'pages/task_management_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('pt_BR', null);
   
   await Hive.initFlutter();
-  
+
   Hive.registerAdapter(TaskAdapter());
+  Hive.registerAdapter(TaskTemplateAdapter());
+  Hive.registerAdapter(RecurrencyTypeAdapter());
+  Hive.registerAdapter(TaskStatusAdapter());
 
   await Hive.openBox('apogee_data');
+
+  // Initialize services
+  await TaskService.instance.initialize();
+  await UserService.instance.initialize();
   
   runApp(const Apogee());
 }
@@ -38,68 +52,113 @@ class ApogeeHomePage extends StatefulWidget {
 }
 
 class _ApogeeHomePageState extends State<ApogeeHomePage> {
-  final Box _dataBox = Hive.box('apogee_data');
+  final TaskService _taskService = TaskService.instance;
+  final UserService _userService = UserService.instance;
 
   CalendarFormat _calendarFormat = CalendarFormat.month;
 
   int _userPoints = 0;
+  int _userCoins = 0;
+  int _userDiamonds = 0;
+  int _userLevel = 1;
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
-
-  final List<Task> _dailyTaskTemplate = [
-    Task(name: 'Lavar a louça do dia', points: 15),
-    Task(name: 'Estudar Programação Competitiva (1h)', points: 40),
-    Task(name: 'Limpar e organizar a casa (15 min)', points: 20),
-    Task(name: 'Praticar piano (30 min)', points: 30),
-  ];
 
   @override
   void initState() {
     super.initState();
     _selectedDay = _focusedDay;
-    _userPoints = _dataBox.get('userPoints', defaultValue: 0);
+    _loadUserData();
+  }
+
+  void _loadUserData() {
+    setState(() {
+      _userPoints = _userService.getUserPoints();
+      _userCoins = _userService.getUserCoins();
+      _userDiamonds = _userService.getUserDiamonds();
+      _userLevel = _userService.getUserLevel();
+    });
   }
 
   List<Task> _getTasksForDay(DateTime day) {
-    final normalizedDay = DateTime.utc(day.year, day.month, day.day);
-    final key = normalizedDay.toIso8601String();
-    
-    final taskData = _dataBox.get(key);
+    return _taskService.getTasksForDay(day);
+  }
 
-    if (taskData == null) {
-      final newTasks = _dailyTaskTemplate
-          .map((task) => Task(name: task.name, points: task.points))
-          .toList();
-      _dataBox.put(key, newTasks);
-      return newTasks;
-    } else {
-      return List<Task>.from(taskData);
+  Future<void> _updateTaskStatus(Task task, TaskStatus newStatus, DateTime day) async {
+    try {
+      await _taskService.updateTaskStatus(task, newStatus, day);
+
+      // Get updated task to check if it's late
+      final updatedTasks = _taskService.getTasksForDay(day);
+      final updatedTask = updatedTasks.firstWhere((t) => t.id == task.id);
+
+      // Handle rewards based on status change
+      if (task.status != newStatus) {
+        // Handle coin rewards/losses
+        if (newStatus == TaskStatus.completed) {
+          await _userService.addCoins(task.coins);
+        } else if (task.status == TaskStatus.completed && newStatus != TaskStatus.completed) {
+          // If changing from completed to something else, remove coins
+          await _userService.removeCoins(task.coins);
+        }
+
+        // Handle XP rewards/losses
+        if (newStatus != TaskStatus.pending) {
+          // Calculate XP based on status and timing (only for on-time tasks)
+          int xpAmount = 0;
+          if (!updatedTask.isLate) {
+            // Only give XP if task is not late
+            if (newStatus == TaskStatus.completed) {
+              xpAmount = task.coins; // Full XP for on-time completion
+            } else if (newStatus == TaskStatus.notNecessary) {
+              xpAmount = task.coins ~/ 2; // Half XP for "not necessary"
+            } else if (newStatus == TaskStatus.notDid) {
+              xpAmount = task.coins ~/ 4; // Quarter XP for "not did"
+            }
+          }
+          // Late completion gives 0 XP (xpAmount stays 0)
+
+          if (xpAmount > 0) {
+            await _userService.addPoints(xpAmount);
+          }
+        } else if (task.status != TaskStatus.pending && newStatus == TaskStatus.pending) {
+          // Reverting to pending - lose XP and coins
+          int xpLoss = 0;
+          if (task.status == TaskStatus.completed && !task.isLate) {
+            xpLoss = task.coins;
+          } else if (task.status == TaskStatus.notNecessary) {
+            xpLoss = task.coins ~/ 2;
+          } else if (task.status == TaskStatus.notDid) {
+            xpLoss = task.coins ~/ 4;
+          }
+
+          if (xpLoss > 0) {
+            await _userService.removePoints(xpLoss);
+          }
+        }
+
+        // Update streak for the day after task status change
+        final updatedTasksForDay = _taskService.getTasksForDay(day);
+        await _userService.updateStreakForDay(updatedTasksForDay);
+      }
+
+      _loadUserData();
+      setState(() {}); // Refresh UI
+    } catch (e) {
+      if (kDebugMode) print('Error updating task ${task.id}: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Erro ao atualizar tarefa. Tente novamente.')),
+        );
+      }
     }
   }
 
-  void _toggleTask(Task task, DateTime day) {
-    final normalizedDay = DateTime.utc(day.year, day.month, day.day);
-    final key = normalizedDay.toIso8601String();
-
-    List<Task> tasksForDay = _getTasksForDay(normalizedDay);
-    
-    final taskIndex = tasksForDay.indexWhere((t) => t.name == task.name);
-
-    if (taskIndex != -1) {
-      final isFinished = !tasksForDay[taskIndex].finished;
-      tasksForDay[taskIndex].finished = isFinished;
-      
-      setState(() {
-        if (isFinished) {
-          _userPoints += task.points;
-        } else {
-          _userPoints -= task.points;
-        }
-      });
-
-      _dataBox.put(key, tasksForDay);
-      _dataBox.put('userPoints', _userPoints);
-    }
+  @override
+  void dispose() {
+    _taskService.dispose();
+    _userService.dispose();
+    super.dispose();
   }
 
   @override
@@ -114,12 +173,37 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
         backgroundColor: Colors.deepPurple,
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => _regenerateAllTasks(),
+            tooltip: 'Atualizar todas as tarefas',
+          ),
           Center(
             child: Padding(
               padding: const EdgeInsets.only(right: 20.0),
-              child: Text(
-                '$_userPoints XP',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Nv.$_userLevel',
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '$_userPoints XP',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '💰$_userCoins',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '💎$_userDiamonds',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ],
               ),
             ),
           ),
@@ -219,13 +303,16 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
                 final tasks = _getTasksForDay(day);
                 if (tasks.isEmpty) return null;
 
-                final completedCount = tasks.where((task) => task.finished).length;
-                if (completedCount == 0 && !isSameDay(day, DateTime.now())) return null;
+                final completedCount = tasks.where((task) => task.status == TaskStatus.completed).length;
+                final notNecessaryCount = tasks.where((task) => task.status == TaskStatus.notNecessary).length;
+                final finishedCount = completedCount + notNecessaryCount;
 
-                final percentage = completedCount / tasks.length;
+                if (finishedCount == 0 && !isSameDay(day, DateTime.now())) return null;
+
+                final percentage = finishedCount / tasks.length;
                 Color dayColor;
 
-                if (completedCount == 0) {
+                if (finishedCount == 0) {
                   dayColor = Colors.red.shade700;
                 } else if (percentage < 1.0) {
                   dayColor = Color.lerp(Colors.red.shade700, Colors.green.shade700, percentage)!;
@@ -251,42 +338,147 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
           const Divider(),
 
 
-          Expanded( child: ListView.builder(
-            itemCount: selectedTasks.length,
-            itemBuilder: (context, index) {
-              final task = selectedTasks[index];
-              
-              return ListTile(
-                onTap: () => _toggleTask(task, selectedDay),
-                
-                leading: Checkbox(
-                  value: task.finished,
-                  onChanged: (_) => _toggleTask(task, selectedDay),
-                ),
-                
-                title: Text(
-                  task.name,
-                  style: TextStyle(
-                    decoration: task.finished
-                        ? TextDecoration.lineThrough
-                        : TextDecoration.none,
-                    color: task.finished ? Colors.grey : null,
-                  ),
-                ),
-                
-                trailing: Text(
-                  '+${task.points} XP',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: task.finished ? Colors.grey : null,
-                  ),
-                ),
-              
-              );
-            },
+          Expanded(
+            child: ListView.builder(
+              itemCount: selectedTasks.length,
+              itemBuilder: (context, index) {
+                final task = selectedTasks[index];
 
-          )),
+                return Card(
+                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: ListTile(
+                    title: Text(
+                      task.name,
+                      style: TextStyle(
+                        decoration: task.status == TaskStatus.completed
+                            ? TextDecoration.lineThrough
+                            : TextDecoration.none,
+                        color: task.status == TaskStatus.completed ? Colors.grey : null,
+                      ),
+                    ),
+                    subtitle: task.status != TaskStatus.pending
+                        ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(task.status.description, style: const TextStyle(fontSize: 12)),
+                              if (task.isLate && task.status != TaskStatus.pending)
+                                const Text(
+                                  '🕐 Atrasada',
+                                  style: TextStyle(fontSize: 11, color: Colors.orange),
+                                ),
+                            ],
+                          )
+                        : null,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '💰${task.coins}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: task.status == TaskStatus.completed ? Colors.grey : Colors.orange,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        PopupMenuButton<TaskStatus>(
+                          onSelected: (status) => _updateTaskStatus(task, status, selectedDay),
+                          icon: Icon(
+                            task.status == TaskStatus.pending ? Icons.radio_button_unchecked :
+                            task.status == TaskStatus.completed ? Icons.check_circle :
+                            task.status == TaskStatus.notNecessary ? Icons.not_interested :
+                            Icons.cancel,
+                            color: task.status == TaskStatus.completed ? Colors.green :
+                                   task.status == TaskStatus.notNecessary ? Colors.blue :
+                                   task.status == TaskStatus.notDid ? Colors.orange :
+                                   Colors.grey,
+                          ),
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(
+                              value: TaskStatus.completed,
+                              child: ListTile(
+                                leading: Icon(Icons.check_circle, color: Colors.green),
+                                title: Text('Concluída'),
+                                subtitle: Text('Ganhar moedas'),
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: TaskStatus.notNecessary,
+                              child: ListTile(
+                                leading: Icon(Icons.not_interested, color: Colors.blue),
+                                title: Text('Não necessária'),
+                                subtitle: Text('Sem penalidade'),
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: TaskStatus.notDid,
+                              child: ListTile(
+                                leading: Icon(Icons.cancel, color: Colors.orange),
+                                title: Text('Não fez'),
+                                subtitle: Text('Ganhar XP mais tarde'),
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: TaskStatus.pending,
+                              child: ListTile(
+                                leading: Icon(Icons.radio_button_unchecked, color: Colors.grey),
+                                title: Text('Pendente'),
+                                subtitle: Text('Resetar status'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
         ],
+      ),
+
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showTaskManagement(),
+        backgroundColor: Colors.deepPurple,
+        foregroundColor: Colors.white,
+        child: const Icon(Icons.settings),
+      ),
+    );
+  }
+
+  Future<void> _regenerateAllTasks() async {
+    try {
+      await _taskService.regenerateAllDays();
+      setState(() {}); // Refresh UI
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Todas as tarefas foram atualizadas!')),
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) print('Error regenerating all tasks: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Erro ao atualizar tarefas')),
+        );
+      }
+    }
+  }
+
+  void _showTaskManagement() {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        child: SizedBox(
+          width: MediaQuery.of(context).size.width * 0.9,
+          height: MediaQuery.of(context).size.height * 0.8,
+          child: TaskManagementPage(
+            onTasksChanged: () {
+              _loadUserData(); // Refresh user data (coins, XP, etc.)
+              setState(() {}); // Refresh the calendar view
+            },
+          ),
+        ),
       ),
     );
   }
