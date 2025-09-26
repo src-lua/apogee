@@ -4,6 +4,7 @@ import '../models/task.dart';
 import '../models/task_template.dart';
 import '../models/enums/recurrency_type.dart';
 import '../models/enums/task_status.dart';
+import 'streak_service.dart';
 
 class TaskService {
   late final Box _dataBox;
@@ -15,6 +16,7 @@ class TaskService {
 
   Future<void> initialize() async {
     _dataBox = Hive.box('apogee_data');
+    await StreakService.instance.initialize();
     await _initializeDefaultTemplates();
   }
 
@@ -182,6 +184,9 @@ class TaskService {
 
         tasksForDay[taskIndex] = updatedTask;
         await _dataBox.put(key, tasksForDay);
+
+        // Update streaks when task status changes
+        await _updateStreaksForTaskChange(task.id);
         return;
       }
       throw Exception('Task not found');
@@ -289,6 +294,32 @@ class TaskService {
       }
     } catch (e) {
       if (kDebugMode) print('Error regenerating all days: $e');
+    }
+  }
+
+  Future<void> _updateStreaksForTaskChange(String taskId) async {
+    try {
+      // Extract template ID from task ID (everything before the last ISO date part)
+      final parts = taskId.split('_');
+      final templateId = parts.sublist(0, parts.length - 1).join('_');
+      final templates = getTaskTemplates();
+
+      // Find template safely
+      final templateIndex = templates.indexWhere((t) => t.id == templateId);
+      if (templateIndex == -1) {
+        if (kDebugMode) print('Template not found for task $taskId (templateId: $templateId)');
+        return;
+      }
+
+      final template = templates[templateIndex];
+      await StreakService.instance.updateTaskStreak(template);
+      await StreakService.instance.updateGlobalLoggingStreak();
+
+      // Update the template with new streak data
+      templates[templateIndex] = template;
+      await saveTaskTemplates(templates);
+    } catch (e) {
+      if (kDebugMode) print('Error updating streaks for task $taskId: $e');
     }
   }
 

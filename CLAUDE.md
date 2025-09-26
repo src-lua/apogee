@@ -5,7 +5,7 @@ Flutter-based habit tracker with positive reinforcement mechanics and advanced X
 ## Quick Commands
 ```bash
 flutter pub get                                    # Install deps
-flutter packages pub run build_runner build       # Generate Hive adapters
+flutter packages pub run build_runner build        # Generate Hive adapters
 flutter run                                        # Dev mode
 flutter analyze                                    # Lint
 flutter clean                                      # Clean build

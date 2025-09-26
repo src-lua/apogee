@@ -28,13 +28,14 @@ class TaskTemplateAdapter extends TypeAdapter<TaskTemplate> {
       createdAt: fields[6] as DateTime?,
       lastGenerated: fields[7] as DateTime?,
       lastModified: fields[10] as DateTime?,
+      streakData: fields[11] as TaskStreakData?,
     );
   }
 
   @override
   void write(BinaryWriter writer, TaskTemplate obj) {
     writer
-      ..writeByte(11)
+      ..writeByte(12)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -56,7 +57,9 @@ class TaskTemplateAdapter extends TypeAdapter<TaskTemplate> {
       ..writeByte(9)
       ..write(obj.endDate)
       ..writeByte(10)
-      ..write(obj.lastModified);
+      ..write(obj.lastModified)
+      ..writeByte(11)
+      ..write(obj.streakData);
   }
 
   @override

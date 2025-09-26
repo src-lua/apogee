@@ -395,10 +395,16 @@ class UserService {
           : null;
 
       if (lastResetDay == null || lastResetDay.isBefore(currentDay)) {
-        // Shift XP values: base += real_today, today = tomorrow, tomorrow = 0
-        final realTodayXP = getRealTodayXP();
-        final currentBaseXP = getBaseXP();
-        final currentTomorrowXP = getTomorrowXP();
+        // Get raw values directly from storage to avoid recursive calls
+        final currentBaseXP = _dataBox.get(_userPointsKey, defaultValue: 0);
+        final rawTodayXP = _dataBox.get(_todayXpKey, defaultValue: 0);
+        final currentTomorrowXP = _dataBox.get(_tomorrowXpKey, defaultValue: 0);
+
+        // Calculate real today XP manually
+        const cap = 200;
+        final realTodayXP = rawTodayXP <= cap
+            ? rawTodayXP
+            : cap + ((rawTodayXP - cap) * 0.25).round();
 
         // base XP += real today XP
         _dataBox.put(_userPointsKey, currentBaseXP + realTodayXP);

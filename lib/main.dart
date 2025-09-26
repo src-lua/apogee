@@ -5,11 +5,14 @@ import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'models/task.dart';
 import 'models/task_template.dart';
+import 'models/task_streak_data.dart';
+import 'models/global_streak_data.dart';
 import 'models/enums/recurrency_type.dart';
 import 'models/enums/task_status.dart';
 import 'services/task_service.dart';
 import 'services/user_service.dart';
 import 'pages/task_management_page.dart';
+import 'widgets/streak_widget.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,6 +22,8 @@ Future<void> main() async {
 
   Hive.registerAdapter(TaskAdapter());
   Hive.registerAdapter(TaskTemplateAdapter());
+  Hive.registerAdapter(TaskStreakDataAdapter());
+  Hive.registerAdapter(GlobalStreakDataAdapter());
   Hive.registerAdapter(RecurrencyTypeAdapter());
   Hive.registerAdapter(TaskStatusAdapter());
 
@@ -110,7 +115,7 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
 
     return Tooltip(
       message: 'Nível $_userLevel\n$progressXP / $neededXP XP\n$percentage% para o próximo nível',
-      child: Container(
+      child: SizedBox(
         width: 40,
         height: 40,
         child: Stack(
@@ -446,6 +451,14 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
                       style: const TextStyle(fontSize: 14),
                     ),
                   ),
+                  const SizedBox(width: 12),
+                  Container(
+                    height: 20,
+                    width: 1,
+                    color: Colors.white.withOpacity(0.3),
+                  ),
+                  const SizedBox(width: 12),
+                  const StreakWidget(),
                 ],
               ),
             ),

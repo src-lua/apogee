@@ -1,5 +1,6 @@
 import 'package:hive/hive.dart';
 import 'enums/recurrency_type.dart';
+import 'task_streak_data.dart';
 
 part 'task_template.g.dart';
 
@@ -38,6 +39,9 @@ class TaskTemplate {
   @HiveField(10)
   DateTime lastModified; // Track when template was last changed
 
+  @HiveField(11)
+  TaskStreakData streakData;
+
   TaskTemplate({
     required this.name,
     required this.coins,
@@ -50,9 +54,11 @@ class TaskTemplate {
     DateTime? createdAt,
     this.lastGenerated,
     DateTime? lastModified,
+    TaskStreakData? streakData,
   }) : id = id ?? DateTime.now().millisecondsSinceEpoch.toString(),
        createdAt = createdAt ?? DateTime.now(),
-       lastModified = lastModified ?? DateTime.now();
+       lastModified = lastModified ?? DateTime.now(),
+       streakData = streakData ?? TaskStreakData();
 
   bool shouldGenerateForDay(DateTime day) {
     if (!isActive) return false;
@@ -95,6 +101,7 @@ class TaskTemplate {
     DateTime? startDate,
     DateTime? endDate,
     DateTime? lastGenerated,
+    TaskStreakData? streakData,
     bool updateModified = false,
   }) {
     return TaskTemplate(
@@ -109,6 +116,7 @@ class TaskTemplate {
       createdAt: createdAt,
       lastGenerated: lastGenerated ?? this.lastGenerated,
       lastModified: updateModified ? DateTime.now() : lastModified,
+      streakData: streakData ?? this.streakData,
     );
   }
 }
