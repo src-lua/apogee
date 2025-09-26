@@ -5,7 +5,6 @@
 *.swp
 .DS_Store
 .atom/
-.build/
 .buildlog/
 .history
 .svn/
@@ -18,28 +17,81 @@ migrate_working_dir/
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
+# VS Code
+.vscode/
 
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-/build/
-/coverage/
+# Environment files
+.env
+.env.local
+.env.production
 
-# Symbolication related
-app.*.symbols
+# Flutter/Dart/Pub related (Client)
+client/.dart_tool/
+client/.flutter-plugins-dependencies
+client/.pub-cache/
+client/.pub/
+client/build/
+client/coverage/
+client/**/.flutter-plugins-dependencies
 
-# Obfuscation related
-app.*.map.json
+# Flutter build artifacts
+client/**/doc/api/
+client/**/ios/Flutter/.last_build_id
+client/app.*.symbols
+client/app.*.map.json
 
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
+# Android Studio build artifacts
+client/android/app/debug
+client/android/app/profile
+client/android/app/release
+
+# Server related (Dart)
+server/.dart_tool/
+server/.pub-cache/
+server/.pub/
+server/build/
+server/coverage/
+
+# Shared models
+shared/models/.dart_tool/
+shared/models/.pub-cache/
+shared/models/.pub/
+shared/models/build/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+docker-compose.override.yml
+.docker/
+
+# Logs
+logs/
+*.log
+server.log
+
+# OS generated files
+Thumbs.db
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Generated files
+**/*.g.dart
+**/*.freezed.dart
+
+# IDE
+.vscode/settings.json
+.vscode/launch.json

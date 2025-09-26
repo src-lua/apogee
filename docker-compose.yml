@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:16
+    container_name: apogee_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: apogee
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - apogee_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d apogee"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Apogee API Server
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: apogee_server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - ENVIRONMENT=production
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=apogee
+      - DB_USER=postgres
+      - DB_PASSWORD=password123
+      - JWT_SECRET=change-this-super-secret-key-in-production
+    ports:
+      - "8080:8080"
+    networks:
+      - apogee_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Optional: pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: apogee_pgadmin
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@apogee.dev
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "8081:80"
+    networks:
+      - apogee_network
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+
+networks:
+  apogee_network:
+    driver: bridge
