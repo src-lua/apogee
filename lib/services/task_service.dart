@@ -94,6 +94,9 @@ class TaskService {
       templates[index] = updated;
       await saveTaskTemplates(templates);
 
+      // Notify StreakService of template configuration change
+      await StreakService.instance.onTemplateConfigChanged(updated);
+
       // Regenerate existing days that might be affected
       await _regenerateAffectedDays(updated);
     }
@@ -107,6 +110,9 @@ class TaskService {
     if (index != -1) {
       templates[index] = updatedTemplate;
       await saveTaskTemplates(templates);
+
+      // Still notify StreakService even without regeneration
+      await StreakService.instance.onTemplateConfigChanged(updatedTemplate);
     }
   }
 
@@ -114,6 +120,9 @@ class TaskService {
     final templates = getTaskTemplates();
     templates.removeWhere((t) => t.id == templateId);
     await saveTaskTemplates(templates);
+
+    // Invalidate cache for deleted template
+    StreakService.instance.invalidateCache(templateId);
 
     // Remove tasks from existing days
     await _removeTasksFromExistingDays(templateId);
@@ -312,10 +321,16 @@ class TaskService {
       }
 
       final template = templates[templateIndex];
-      await StreakService.instance.updateTaskStreak(template);
-      await StreakService.instance.updateGlobalLoggingStreak();
+
+      // Use optimized streak update methods
+      final affectedTemplates = [template];
+      final taskDay = DateTime.parse(taskId.split('_').last);
+
+      // Incremental update - only recalculates this template and day
+      await StreakService.instance.updateStreaksForDay(taskDay, affectedTemplates);
 
       // Update the template with new streak data
+      template.streakData = StreakService.instance.calculateTaskStreak(template);
       templates[templateIndex] = template;
       await saveTaskTemplates(templates);
     } catch (e) {

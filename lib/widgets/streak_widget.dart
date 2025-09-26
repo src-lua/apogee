@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../services/streak_service.dart';
 import '../services/task_service.dart';
@@ -24,15 +25,32 @@ class _StreakWidgetState extends State<StreakWidget> with AutomaticKeepAliveClie
     _loadStreakData();
   }
 
+  /// Force refresh streak data (call this after task status changes)
+  void refreshStreakData() {
+    _loadStreakData();
+  }
+
   Future<void> _loadStreakData() async {
     try {
       final globalStreak = StreakService.instance.getGlobalStreakData();
       final templates = TaskService.instance.getTaskTemplates();
 
+      // Recalculate streak data for each template
+      for (final template in templates) {
+        template.streakData = StreakService.instance.calculateTaskStreak(template);
+      }
+
       setState(() {
         _globalStreak = globalStreak;
         _templates = templates;
       });
+
+      if (kDebugMode) {
+        print('Streak data loaded: Global=${globalStreak.currentStreak}, Templates=${templates.length}');
+        for (final template in templates) {
+          print('  ${template.name}: current=${template.streakData.currentStreak}, best=${template.streakData.bestStreak}');
+        }
+      }
     } catch (e) {
       debugPrint('Error loading streak data: $e');
     }

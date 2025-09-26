@@ -59,6 +59,7 @@ class ApogeeHomePage extends StatefulWidget {
 class _ApogeeHomePageState extends State<ApogeeHomePage> {
   final TaskService _taskService = TaskService.instance;
   final UserService _userService = UserService.instance;
+  int _streakRefreshCounter = 0;
 
   CalendarFormat _calendarFormat = CalendarFormat.month;
 
@@ -314,6 +315,10 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
       }
 
       _loadUserData();
+
+      // Force rebuild of streak widget
+      _streakRefreshCounter++;
+
       setState(() {}); // Refresh UI
     } catch (e) {
       if (kDebugMode) print('Error updating task ${task.id}: $e');
@@ -458,7 +463,7 @@ class _ApogeeHomePageState extends State<ApogeeHomePage> {
                     color: Colors.white.withOpacity(0.3),
                   ),
                   const SizedBox(width: 12),
-                  const StreakWidget(),
+                  StreakWidget(key: ValueKey(_streakRefreshCounter)),
                 ],
               ),
             ),
