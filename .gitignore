@@ -95,3 +95,6 @@ ehthumbs.db
 # IDE
 .vscode/settings.json
 .vscode/launch.json
+
+# Claude Code
+.claude/
